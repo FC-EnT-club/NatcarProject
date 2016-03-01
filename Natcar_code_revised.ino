@@ -14,6 +14,8 @@
 //////////////////////////////////////////////////////////////////////
 
 //Note: Please ignore the commented out code, it will be used for the C++ version of this program
+//Note: In the final version of the program all debugging lines will be removed
+//Note: Variables that get updated, are done so as global, instead of by reference 
 
 #include <Arduino.h>
 #include <Servo.h>
@@ -32,9 +34,9 @@
 
 //////////////////////////////////////////////////////////////////////
 //Pin Definitions                                                             <=Might consider using definition macros here as well
-byte CLKpin = 12;              //Define clock pin as pin 12
-byte SIpin = 11;               //Define shiftout pin as pin 11
-int A0pin =  10;               //Define digital output pin as pin 10
+byte CLKpin = 12;               //Define clock pin as pin 12
+byte SIpin = 11;                //Define shiftout pin as pin 11
+int A0pin =  10;                //Define digital output pin as pin 10
 
 //////////////////////////////////////////////////////////////////////
 //Global variables
@@ -50,7 +52,7 @@ int Ierror = 0;                  //Integreation error variable
 int Derror = 0;                  //Derivative error variable
 int heading = 0;                 //Variable to hold steering information
 int timeLapse = 0;               //Variable to hold rate of change variable (Final time - Initial time)
-//Initial time variable
+//Initial time variable                                                                                  <=We need to see if its better to measure rate of change, or simple aggregated values
 //Final time variable
 byte tempBuff = 0;               //Temp buffer to hold aggregated picture data (for debugging)
 Servo dControl;                  //Generate Servo class object
@@ -97,10 +99,10 @@ void loop()
   countPixels();                      //Print pixel array for debugging, count zeros for error gen
   //Potentially end time lapse here
   pidCalc();                          //Calculate PID information for steering
-  //boundCheck(var);
+  boundCheck();                       //Check to make sure servo 
   //Send motor info to other arduino micro if need be
-  Serial.println('\n');               //Start each picture on a new line ( for debugging)
-  delay(3000);                        //Delay for visually confirming values
+  Serial.println('\n');               //Start each picture on a new line (For debugging)
+  delay(3000);                        //Delay for visually confirming values (For debugging)
 }
 ///////////////////////////////////////////////////////////////////////
 
@@ -109,15 +111,15 @@ void loop()
 //Function to bound servo value within spec
 void boundCheck()
 {
-  if(data > uBound || data < lBound)     //Check to see if servo value is out of spec
+  if(heading > uBound || heading < lBound)  //Check to see if servo value is out of spec
   {
-    if(data > uBound)                    //Value too high
+    if(heading > uBound)                    //Value too high
     {
-      data = uBound;                     //Bound to highest value
+      heading = uBound;                     //Bound to highest value
     }
-    else                                 //Value too low
+    else                                    //Value too low
     {
-      data = lBound;                     //Bound to lowest value
+      heading = lBound;                     //Bound to lowest value
     }
   }
 }
@@ -136,20 +138,20 @@ void countPixels()                      //Counts pixels until line is detected
     }
     tempBuff += (pixelBuffer[i]);       //Aggregate each element of the camera array
   }
-  Serial.println(tempBuff);             //Print compilied picture information
+  Serial.println(tempBuff);             //Print compilied picture information (For debugging)
 }
 ////////////////////////////////////////////////////////////////////////
 
 
 ////////////////////////////////////////////////////////////////////////
 //PID Function
-void pidCalc()                           //Calculate component values used for PID algorithm (Note: values are updated each main loop iteration)
+void pidCalc()                                             //Calculate component values used for PID algorithm (Note: values are updated each main loop iteration)
 {
-  error = camCenter - zCnt;              //Generate error values based on counted zeros
-  Ierror = (Ierror + error) * timeLapse; //Generate integration error value
-  Derror = (error - prevEr) / timeLapse; //Generate derivative error value
-  prevEr = error;                        //Update previous error value
-  
+  error = camCenter - zCnt;                                //Generate error values based on counted zeros
+  Ierror = (Ierror + error) * timeLapse;                   //Generate integration error value
+  Derror = (error - prevEr) / timeLapse;                   //Generate derivative error value
+  prevEr = error;                                          //Update previous error value
+  heading = (kP * error) + (kI * Ierror) + (kD * Derror);  //Generate directional information from user set gains and error information
 }
 ////////////////////////////////////////////////////////////////////////
 
