@@ -40,6 +40,7 @@ int A0pin =  10;                //Define digital output pin as pin 10
 
 //////////////////////////////////////////////////////////////////////
 //Global variables
+volatile byte mode = 0;          //Mode flag variable, 1 for manual & 0 for automatic
 byte pixelBuffer[128];           //Buffer to hold pixel information
 byte zCnt = 0;                   //Variable to count zero pixels before line detection
 byte error = 0;                  //Error variable
@@ -52,8 +53,8 @@ int Ierror = 0;                  //Integreation error variable
 int Derror = 0;                  //Derivative error variable
 int heading = 0;                 //Variable to hold steering information
 int timeLapse = 0;               //Variable to hold rate of change variable (Final time - Initial time)
-//Initial time variable                                                                                  <=We need to see if its better to measure rate of change, or simple aggregated values
-//Final time variable
+int iTime = 0;                   //Variable to hold initial time                                                   <=We need to see if its better to measure rate of change, or simple aggregated values
+int fTime = 0;                   //Variable to hold final time
 byte tempBuff = 0;               //Temp buffer to hold aggregated picture data (for debugging)
 Servo dControl;                  //Generate Servo class object
 
@@ -63,14 +64,16 @@ Servo dControl;                  //Generate Servo class object
 //Setup Function
 void setup()
 {
- Serial.begin(9600);             //Begin serial connection for debugging
- dControl.attach(servoPin);      //Attach servo control pin to pin
+ Serial.begin(9600);                         //Begin serial connection (For debugging)
+ dControl.attach(servoPin);                  //Attach servo control pin to pin
  //pinMode(CLKpin, OUTPUT);      
  //pinMode(SIpin, OUTPUT);       
  //pinMode(A0pin, INPUT);
- DDRB = 0b00011000;              //CLKpin, SIpin outputs, A0pin and rest inputs
- DDRC = 0b00000111;              //Pin A0 - A2 inputs, rest outputs
- PORTB = 0b00000000;             //Pull all pins low
+ DDRB = 0b00011000;                          //CLKpin, SIpin outputs, A0pin and rest inputs
+ DDRC = 0b00000111;                          //Pin A0 - A2 inputs, rest outputs
+ PORTB = 0b00000000;                         //Pull all pins low
+ PORTC = 0b00000111;                         //Enable internal pull-up resistors pins A0 - A2
+ //Enable interrupts for manual/auto modes
  //Start phase-correct PWM hardware
  //Start comms if need be  
 }
@@ -81,28 +84,30 @@ void setup()
 //Main Loop
 void loop()
 {
-  zCnt = 0;
-  //Start time lapse here
-  PORTB |= (1 << SIpin);          //Pull pin high to ready data for transfer
-  //digitalWrite(SIpin, HIGH);    //Pull pin high to signal begin capture sequence
+  zCnt = 0;                                   //Reset zero counter for each picture
+  iTime = millis();                           //Acquire beginning time of program
+  PORTB |= (1 << SIpin);                      //Pull pin high to ready data for transfer
+  //digitalWrite(SIpin, HIGH);                //Pull pin high to signal begin capture sequence
   for(byte i = 0; i < 128; i++)
   {
-    PORTB |= (1 << CLKpin);          //Pull clock pin high to signal begin of capture sequence
+    PORTB |= (1 << CLKpin);                   //Pull clock pin high to signal begin of capture sequence
     //digitalWrite(CLKpin, HIGH); 
     //digitalWrite(SIpin, LOW);     
-    PORTB &= ~(1 << SIpin);          //Pull pin low again to actually begin collecting data
+    PORTB &= ~(1 << SIpin);                   //Pull pin low again to actually begin collecting data
     //pixelBuffer[i] = digitalRead(A0pin);       
-    pixelBuffer[i] = (PINB & (1 << A0pin));      //Read in pixel info (might need to change AOpin to 2)
-    PORTB &= ~(1 << CLKpin);                     //Toggle clock pin to cycle in next pixel
+    pixelBuffer[i] = (PINB & (1 << A0pin));   //Read in pixel info (might need to change AOpin to 2)
+    PORTB &= ~(1 << CLKpin);                  //Toggle clock pin to cycle in next pixel
     //digitalWrite(CLKpin, LOW);
   }
-  countPixels();                      //Print pixel array for debugging, count zeros for error gen
-  //Potentially end time lapse here
-  pidCalc();                          //Calculate PID information for steering
-  boundCheck();                       //Check to make sure servo 
+  countPixels();                              //Count zeros until a 1 is found, indicating the line
+  fTime = millis();                           //Acquire ending time of program
+  timeLapse = fTime - iTime;                  //Calculate time rate of change
+  pidCalc();                                  //Calculate PID information for steering
+  boundCheck();                               //Check to make sure servo 
+  dControl.writeMicroseconds(heading);        //Actually move servo with respect to calculated direction
   //Send motor info to other arduino micro if need be
-  Serial.println('\n');               //Start each picture on a new line (For debugging)
-  delay(3000);                        //Delay for visually confirming values (For debugging)
+  Serial.println('\n');                       //Start each picture on a new line (For debugging)
+  delay(3000);                                //Delay for visually confirming values (For debugging)
 }
 ///////////////////////////////////////////////////////////////////////
 
@@ -111,15 +116,15 @@ void loop()
 //Function to bound servo value within spec
 void boundCheck()
 {
-  if(heading > uBound || heading < lBound)  //Check to see if servo value is out of spec
+  if(heading > uBound || heading < lBound)    //Check to see if servo value is out of spec
   {
-    if(heading > uBound)                    //Value too high
+    if(heading > uBound)                      //Value too high
     {
-      heading = uBound;                     //Bound to highest value
+      heading = uBound;                       //Bound to highest value
     }
-    else                                    //Value too low
+    else                                      //Value too low
     {
-      heading = lBound;                     //Bound to lowest value
+      heading = lBound;                       //Bound to lowest value
     }
   }
 }
@@ -128,17 +133,17 @@ void boundCheck()
 
 ////////////////////////////////////////////////////////////////////////
 //Zero Pixel Function
-void countPixels()                      //Counts pixels until line is detected
+void countPixels()                            //Counts pixels until line is detected
 {
-  for(byte i = 0; i < 128; i++)         //Count through buffer array holding picture
+  for(byte i = 0; i < 128; i++)               //Count through buffer array holding picture Note: if we count from center line, we count less
   {
-    if(pixelBuffer[i] == 0)             //Count the number of zeros
+    if(pixelBuffer[i] == 0)                   //Count the number of zeros
     {
-      zCnt += 1;                        //Increment zero counter to generate pError val
+      zCnt += 1;                              //Increment zero counter to generate pError val
     }
-    tempBuff += (pixelBuffer[i]);       //Aggregate each element of the camera array
+    tempBuff += (pixelBuffer[i]);             //Aggregate each element of the camera array (For debugging)
   }
-  Serial.println(tempBuff);             //Print compilied picture information (For debugging)
+  Serial.println(tempBuff);                   //Print compilied picture information (For debugging)
 }
 ////////////////////////////////////////////////////////////////////////
 
